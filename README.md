@@ -20,11 +20,8 @@ Telegram Mini App (WebApp) интернет-магазин на полном с�
 - [Продакшн-деплой](#продакшн-деплой)
 - [Первичные данные (seed)](#первичные-данные-seed)
 - [Полезные команды](#полезные-команды)
-- [Обновление TLS-сертификатов (cron)](#обновление-tls-сертификатов-cron)
 - [Структура проекта](#структура-проекта)
-- [Troubleshooting](#troubleshooting)
-- [FAQ](#faq)
-- [Лицензия](#лицензия)
+
 
 ---
 
@@ -110,3 +107,107 @@ cp .env.example .env
 # отредактируйте .env (BOT_TOKEN, пароли, ADMIN_EMAIL/ADMIN_PASSWORD и т.д.)
 
 docker compose up --build
+
+После старта:
+
+Backend: http://localhost:8000
+API-документация (Swagger): http://localhost:8000/docs
+WebApp (dev): http://localhost:5173 (см. вывод контейнера frontend)
+Admin (dev): http://localhost:5174 (см. вывод контейнера admin)
+
+```
+
+---
+
+## Локальный тест WebApp через туннель
+
+
+Telegram требует HTTPS для WebApp, поэтому для локальной проверки поднимите
+туннель через cloudflared (или ngrok):
+
+Bash
+
+cloudflared tunnel --url http://localhost:8000
+Скопируйте выданный HTTPS-URL.
+Пропишите его в .env → WEBAPP_URL.
+Укажите тот же URL в @BotFather:
+/setmenubutton → WebApp URL.
+Перезапустите бота, откройте чат с ним и нажмите кнопку запуска.
+
+---
+
+## Продакшн-деплой
+
+Настройте DNS: shop.example.com и admin.shop.example.com → IP сервера.
+Заполните .env реальными значениями (домены, токены, пароли).
+Получите TLS-сертификаты (Let's Encrypt) и положите в nginx/certs/:
+Bash
+
+certbot certonly --standalone \
+  -d shop.example.com -d admin.shop.example.com
+cp /etc/letsencrypt/live/shop.example.com/fullchain.pem nginx/certs/
+cp /etc/letsencrypt/live/shop.example.com/privkey.pem   nginx/certs/
+Запустите:
+Bash
+
+docker compose -f docker-compose.prod.yml --env-file .env up --build -d
+Установите webhook бота (если используется webhook-режим):
+Bash
+
+curl -F "url=https://shop.example.com/webhook/telegram" \
+     -F "secret_token=$BOT_WEBHOOK_SECRET" \
+     "https://api.telegram.org/bot$BOT_TOKEN/setWebhook"
+В @BotFather:
+/setmenubutton → WebApp URL: https://shop.example.com
+Подключите платёжного провайдера (/mybots → Payments).
+
+---
+
+## Первичные данные (seed)
+
+При первом запуске backend автоматически:
+
+применяет миграции (alembic upgrade head);
+выполняет seed: создаёт супер-админа из .env, а также базовые цвета, размеры и категории.
+Вход в админку: ADMIN_EMAIL / ADMIN_PASSWORD
+(URL: https://admin.shop.example.com).
+
+---
+
+## Полезные команды
+
+Bash
+
+# Логи
+docker compose -f docker-compose.prod.yml logs -f backend
+docker compose -f docker-compose.prod.yml logs -f bot
+
+# Миграции вручную
+docker compose exec backend alembic revision --autogenerate -m "msg"
+docker compose exec backend alembic upgrade head
+
+# Пересборка одного сервиса
+docker compose -f docker-compose.prod.yml up -d --build frontend
+
+# Бэкап БД
+docker compose exec postgres pg_dump -U teeshop teeshop > backup.sql
+
+# Восстановление БД из бэкапа
+cat backup.sql | docker compose exec -T postgres psql -U teeshop teeshop
+
+# Проверка webhook бота
+curl "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo"
+
+---
+
+## Структура проекта
+
+
+teeshop/
+├── backend/    # FastAPI: API, модели, миграции, seed, telegram-verify
+├── bot/        # aiogram: команды, платежи, уведомления
+├── frontend/   # React WebApp (магазин)
+├── admin/      # React Admin (панель управления)
+├── nginx/      # edge-конфиг + сертификаты
+├── .env.example
+└── docker-compose*.yml
